@@ -1,0 +1,20 @@
+## .NET
+bin/
+obj/
+out/
+
+## Rider / VS / VS Code
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+## SQLite dev database (generated at runtime)
+*.db
+*.db-shm
+*.db-wal
+
+## Secrets
+appsettings.Local.json
+*.pfx
