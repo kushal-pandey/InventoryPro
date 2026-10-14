@@ -35,7 +35,7 @@ public class ProductsController : ControllerBase
         => Ok(await _productService.GetLowStockAsync());
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Staff")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(ProductDto), 201)]
     public async Task<ActionResult<ProductDto>> Create(CreateProductDto dto)
     {
@@ -44,7 +44,7 @@ public class ProductsController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
-    [Authorize(Roles = "Admin,Staff")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Update(int id, UpdateProductDto dto)
     {
         await _productService.UpdateAsync(id, dto);
@@ -52,7 +52,7 @@ public class ProductsController : ControllerBase
     }
 
     [HttpPatch("{id:int}/stock")]
-    [Authorize(Roles = "Admin,Staff")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ProductDto>> AdjustStock(int id, AdjustStockDto dto)
         => Ok(await _productService.AdjustStockAsync(id, dto));
 

@@ -1,3 +1,4 @@
+using InventoryPro.Application.Common;
 using InventoryPro.Application.DTOs;
 using InventoryPro.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -12,20 +13,18 @@ public class CustomersController : ControllerBase
 {
     private readonly ICustomerService _customerService;
 
-    public CustomersController(ICustomerService customerService)
-    {
-        _customerService = customerService;
-    }
+    public CustomersController(ICustomerService customerService) => _customerService = customerService;
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<CustomerDto>>> GetAll()
-        => Ok(await _customerService.GetAllAsync());
+    public async Task<ActionResult<PagedResult<CustomerDto>>> GetAll([FromQuery] ListQueryParameters query)
+        => Ok(await _customerService.GetAllAsync(query));
 
     [HttpGet("{id:int}")]
     public async Task<ActionResult<CustomerDto>> GetById(int id)
         => Ok(await _customerService.GetByIdAsync(id));
 
     [HttpPost]
+    [Authorize(Roles = "Admin,Staff")]
     public async Task<ActionResult<CustomerDto>> Create(CreateCustomerDto dto)
     {
         var created = await _customerService.CreateAsync(dto);

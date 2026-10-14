@@ -21,7 +21,7 @@ public class ProductService : IProductService
 
     public async Task<PagedResult<ProductDto>> GetAllAsync(ProductQueryParameters q)
     {
-        var query = _uow.Products.Query().Include(p => p.Category).AsQueryable();
+        var query = _uow.Products.Query().AsNoTracking().Include(p => p.Category).AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(q.Search))
         {
@@ -72,7 +72,7 @@ public class ProductService : IProductService
 
     public async Task<ProductDto> GetByIdAsync(int id)
     {
-        var product = await _uow.Products.Query().Include(p => p.Category)
+        var product = await _uow.Products.Query().AsNoTracking().Include(p => p.Category)
             .FirstOrDefaultAsync(p => p.Id == id)
             ?? throw new NotFoundException(nameof(Product), id);
 
@@ -113,7 +113,8 @@ public class ProductService : IProductService
         product.IsActive = dto.IsActive;
         product.UpdatedAt = DateTime.UtcNow;
 
-        _uow.Products.Update(product);
+        // The entity is tracked. Let EF update only changed fields so a concurrent
+        // stock deduction is not overwritten by a stale StockQuantity value.
         await _uow.SaveChangesAsync();
     }
 
@@ -127,7 +128,6 @@ public class ProductService : IProductService
         {
             // Soft-delete: keep history intact for existing orders.
             product.IsActive = false;
-            _uow.Products.Update(product);
         }
         else
         {
@@ -139,18 +139,39 @@ public class ProductService : IProductService
 
     public async Task<ProductDto> AdjustStockAsync(int id, AdjustStockDto dto)
     {
-        var product = await _uow.Products.GetByIdAsync(id)
-            ?? throw new NotFoundException(nameof(Product), id);
+        if (dto.QuantityChange == 0)
+            return await GetByIdAsync(id);
 
-        var newQuantity = product.StockQuantity + dto.QuantityChange;
-        if (newQuantity < 0)
-            throw new ConflictException($"Stock adjustment would result in negative stock ({newQuantity}).");
+        if (dto.QuantityChange is < -1_000_000 or > 1_000_000)
+            throw new ConflictException("Stock adjustments must be between -1,000,000 and 1,000,000.");
 
-        product.StockQuantity = newQuantity;
-        product.UpdatedAt = DateTime.UtcNow;
+        var query = _uow.Products.Query().Where(p => p.Id == id);
+        var exists = await query.AnyAsync();
+        if (!exists)
+            throw new NotFoundException(nameof(Product), id);
 
-        _uow.Products.Update(product);
-        await _uow.SaveChangesAsync();
+        var now = DateTime.UtcNow;
+        var safeQuery = dto.QuantityChange < 0
+            ? query.Where(p => p.StockQuantity >= -dto.QuantityChange)
+            : query.Where(p => p.StockQuantity <= int.MaxValue - dto.QuantityChange);
+
+        var affected = await safeQuery.ExecuteUpdateAsync(setters => setters
+            .SetProperty(p => p.StockQuantity, p => p.StockQuantity + dto.QuantityChange)
+            .SetProperty(p => p.UpdatedAt, now));
+
+        if (affected == 0)
+        {
+            var current = await _uow.Products.Query().AsNoTracking()
+                .Where(p => p.Id == id)
+                .Select(p => (int?)p.StockQuantity)
+                .FirstOrDefaultAsync();
+
+            if (current is null)
+                throw new NotFoundException(nameof(Product), id);
+
+            throw new ConflictException(
+                $"Stock adjustment would result in an invalid quantity (current stock: {current}, change: {dto.QuantityChange}).");
+        }
 
         return await GetByIdAsync(id);
     }

@@ -18,10 +18,24 @@ public class CustomerService : ICustomerService
         _mapper = mapper;
     }
 
-    public async Task<IEnumerable<CustomerDto>> GetAllAsync()
+    public async Task<PagedResult<CustomerDto>> GetAllAsync(ListQueryParameters query)
     {
-        var customers = await _uow.Customers.Query().ToListAsync();
-        return _mapper.Map<IEnumerable<CustomerDto>>(customers);
+        var source = _uow.Customers.Query().AsNoTracking()
+            .OrderBy(c => c.FullName).ThenBy(c => c.Id);
+        var totalCount = await source.CountAsync();
+        var pageNumber = query.SafePageNumber;
+        var pageSize = query.SafePageSize;
+        var customers = await source.Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+
+        return new PagedResult<CustomerDto>
+        {
+            Items = _mapper.Map<List<CustomerDto>>(customers),
+            PageNumber = pageNumber,
+            PageSize = pageSize,
+            TotalCount = totalCount
+        };
     }
 
     public async Task<CustomerDto> GetByIdAsync(int id)
@@ -34,10 +48,13 @@ public class CustomerService : ICustomerService
 
     public async Task<CustomerDto> CreateAsync(CreateCustomerDto dto)
     {
-        var emailTaken = await _uow.Customers.Query().AnyAsync(c => c.Email == dto.Email);
+        var email = dto.Email.Trim();
+        var emailTaken = await _uow.Customers.Query()
+            .AnyAsync(c => c.Email.ToLower() == email.ToLower());
         if (emailTaken)
-            throw new ConflictException($"A customer with email '{dto.Email}' already exists.");
+            throw new ConflictException($"A customer with email '{email}' already exists.");
 
+        dto.Email = email;
         var customer = _mapper.Map<Customer>(dto);
         await _uow.Customers.AddAsync(customer);
         await _uow.SaveChangesAsync();

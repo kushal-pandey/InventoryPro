@@ -18,19 +18,47 @@ public class CategoryService : ICategoryService
         _mapper = mapper;
     }
 
-    public async Task<IEnumerable<CategoryDto>> GetAllAsync()
+    public async Task<PagedResult<CategoryDto>> GetAllAsync(ListQueryParameters query)
     {
-        var categories = await _uow.Categories.Query().Include(c => c.Products).ToListAsync();
-        return _mapper.Map<IEnumerable<CategoryDto>>(categories);
+        var source = _uow.Categories.Query().AsNoTracking().OrderBy(c => c.Name).ThenBy(c => c.Id);
+        var totalCount = await source.CountAsync();
+        var pageNumber = query.SafePageNumber;
+        var pageSize = query.SafePageSize;
+        var categories = await source.Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .Select(c => new CategoryDto
+            {
+                Id = c.Id,
+                Name = c.Name,
+                Description = c.Description,
+                ProductCount = c.Products.Count(p => p.IsActive)
+            })
+            .ToListAsync();
+
+        return new PagedResult<CategoryDto>
+        {
+            Items = categories,
+            PageNumber = pageNumber,
+            PageSize = pageSize,
+            TotalCount = totalCount
+        };
     }
 
     public async Task<CategoryDto> GetByIdAsync(int id)
     {
-        var category = await _uow.Categories.Query().Include(c => c.Products)
-            .FirstOrDefaultAsync(c => c.Id == id)
+        var category = await _uow.Categories.Query().AsNoTracking()
+            .Where(c => c.Id == id)
+            .Select(c => new CategoryDto
+            {
+                Id = c.Id,
+                Name = c.Name,
+                Description = c.Description,
+                ProductCount = c.Products.Count(p => p.IsActive)
+            })
+            .FirstOrDefaultAsync()
             ?? throw new NotFoundException(nameof(Category), id);
 
-        return _mapper.Map<CategoryDto>(category);
+        return category;
     }
 
     public async Task<CategoryDto> CreateAsync(CreateCategoryDto dto)
