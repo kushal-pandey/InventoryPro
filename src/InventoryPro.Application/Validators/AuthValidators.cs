@@ -8,9 +8,14 @@ public class RegisterValidator : AbstractValidator<RegisterDto>
     public RegisterValidator()
     {
         RuleFor(r => r.FullName).NotEmpty().MaximumLength(150);
-        RuleFor(r => r.Email).NotEmpty().EmailAddress();
-        RuleFor(r => r.Password).NotEmpty().MinimumLength(6)
-            .WithMessage("Password must be at least 6 characters long.");
+        RuleFor(r => r.Email).NotEmpty().EmailAddress().MaximumLength(256);
+        RuleFor(r => r.Password)
+            .NotEmpty()
+            .MinimumLength(12)
+            .Matches("[A-Z]").WithMessage("Password must contain an uppercase letter.")
+            .Matches("[a-z]").WithMessage("Password must contain a lowercase letter.")
+            .Matches("[0-9]").WithMessage("Password must contain a digit.")
+            .Matches("[^a-zA-Z0-9]").WithMessage("Password must contain a non-alphanumeric character.");
     }
 }
 

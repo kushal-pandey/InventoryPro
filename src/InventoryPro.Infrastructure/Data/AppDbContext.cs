@@ -26,7 +26,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(p => p.Sku).IsRequired().HasMaxLength(50);
             entity.HasIndex(p => p.Sku).IsUnique();
             entity.Property(p => p.Price).HasColumnType("decimal(18,2)");
-            
+
 
             entity.HasOne(p => p.Category)
                   .WithMany(c => c.Products)

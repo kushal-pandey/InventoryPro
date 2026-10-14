@@ -4,8 +4,13 @@ public class ProductQueryParameters
 {
     private const int MaxPageSize = 50;
     private int _pageSize = 10;
+    private int _pageNumber = 1;
 
-    public int PageNumber { get; set; } = 1;
+    public int PageNumber
+    {
+        get => _pageNumber;
+        set => _pageNumber = value < 1 ? 1 : Math.Min(value, int.MaxValue / MaxPageSize);
+    }
 
     public int PageSize
     {

@@ -17,7 +17,7 @@ public class Product
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
-    // Optimistic concurrency token (maps to SQL Server rowversion)
+    // Legacy schema column retained for migration compatibility; stock concurrency uses conditional database updates.
     public byte[] RowVersion { get; set; } = Array.Empty<byte>();
 
     public ICollection<OrderItem> OrderItems { get; set; } = new List<OrderItem>();

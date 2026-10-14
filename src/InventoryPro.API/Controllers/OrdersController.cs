@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using InventoryPro.Application.Common;
 using InventoryPro.Application.DTOs;
 using InventoryPro.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -13,24 +14,16 @@ public class OrdersController : ControllerBase
 {
     private readonly IOrderService _orderService;
 
-    public OrdersController(IOrderService orderService)
-    {
-        _orderService = orderService;
-    }
+    public OrdersController(IOrderService orderService) => _orderService = orderService;
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<OrderDto>>> GetAll()
-        => Ok(await _orderService.GetAllAsync());
+    public async Task<ActionResult<PagedResult<OrderDto>>> GetAll([FromQuery] ListQueryParameters query)
+        => Ok(await _orderService.GetAllAsync(query));
 
     [HttpGet("{id:int}")]
     public async Task<ActionResult<OrderDto>> GetById(int id)
         => Ok(await _orderService.GetByIdAsync(id));
 
-    /// <summary>
-    /// Places a new order. Stock is validated and decremented atomically for every
-    /// line item — if any line fails (e.g. insufficient stock), the whole order is
-    /// rolled back.
-    /// </summary>
     [HttpPost]
     [Authorize(Roles = "Admin,Staff")]
     public async Task<ActionResult<OrderDto>> Create(CreateOrderDto dto)

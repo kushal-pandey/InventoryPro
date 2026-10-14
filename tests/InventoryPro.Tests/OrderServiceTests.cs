@@ -402,6 +402,44 @@ public sealed class OrderServiceTests : IAsyncLifetime
         Assert.Equal(404, exception.StatusCode);
     }
 
+    [Fact]
+    public async Task UpdateStatusAsync_CancellingOrder_RestoresStockExactlyOnce()
+    {
+        var customer = await AddCustomerAsync();
+        var product = await AddProductAsync(stock: 10);
+
+        var created = await _service.CreateAsync(
+            CreateOrderDto(customer.Id, new CreateOrderItemDto
+            {
+                ProductId = product.Id,
+                Quantity = 4
+            }),
+            "test-user");
+
+        var afterOrder = await _context.Products.AsNoTracking()
+            .FirstAsync(p => p.Id == product.Id);
+        Assert.Equal(6, afterOrder.StockQuantity);
+
+        var cancelled = await _service.UpdateStatusAsync(
+            created.Id,
+            new UpdateOrderStatusDto { Status = OrderStatus.Cancelled });
+
+        Assert.Equal(OrderStatus.Cancelled, cancelled.Status);
+
+        var afterCancellation = await _context.Products.AsNoTracking()
+            .FirstAsync(p => p.Id == product.Id);
+        Assert.Equal(10, afterCancellation.StockQuantity);
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateStatusAsync(
+                created.Id,
+                new UpdateOrderStatusDto { Status = OrderStatus.Cancelled }));
+
+        var afterRepeatedCancellation = await _context.Products.AsNoTracking()
+            .FirstAsync(p => p.Id == product.Id);
+        Assert.Equal(10, afterRepeatedCancellation.StockQuantity);
+    }
+
     [Theory]
     [InlineData(OrderStatus.Cancelled)]
     [InlineData(OrderStatus.Delivered)]

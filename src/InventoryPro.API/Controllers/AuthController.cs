@@ -1,9 +1,9 @@
-using FluentValidation;
 using InventoryPro.Application.DTOs;
 using InventoryPro.Application.Interfaces;
 using InventoryPro.Domain.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace InventoryPro.API.Controllers;
 
@@ -12,43 +12,45 @@ namespace InventoryPro.API.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly UserManager<ApplicationUser> _userManager;
+    private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly ITokenService _tokenService;
-    private readonly IValidator<RegisterDto> _registerValidator;
-    private readonly IValidator<LoginDto> _loginValidator;
 
     public AuthController(
         UserManager<ApplicationUser> userManager,
-        ITokenService tokenService,
-        IValidator<RegisterDto> registerValidator,
-        IValidator<LoginDto> loginValidator)
+        SignInManager<ApplicationUser> signInManager,
+        ITokenService tokenService)
     {
         _userManager = userManager;
+        _signInManager = signInManager;
         _tokenService = tokenService;
-        _registerValidator = registerValidator;
-        _loginValidator = loginValidator;
     }
 
-    /// <summary>Registers a new user with the "Staff" role.</summary>
+    /// <summary>Registers a new user with the least-privileged Staff role.</summary>
     [HttpPost("register")]
     public async Task<ActionResult<AuthResponseDto>> Register(RegisterDto dto)
     {
-        await _registerValidator.ValidateAndThrowAsync(dto);
-
-        if (await _userManager.FindByEmailAsync(dto.Email) is not null)
+        var email = dto.Email.Trim();
+        if (await _userManager.FindByEmailAsync(email) is not null)
             return Conflict(new { message = "A user with this email already exists." });
 
         var user = new ApplicationUser
         {
-            UserName = dto.Email,
-            Email = dto.Email,
-            FullName = dto.FullName
+            UserName = email,
+            Email = email,
+            FullName = dto.FullName.Trim()
         };
 
         var result = await _userManager.CreateAsync(user, dto.Password);
         if (!result.Succeeded)
             return BadRequest(new { errors = result.Errors.Select(e => e.Description) });
 
-        await _userManager.AddToRoleAsync(user, "Staff");
+        var roleResult = await _userManager.AddToRoleAsync(user, "Staff");
+        if (!roleResult.Succeeded)
+        {
+            await _userManager.DeleteAsync(user);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new { message = "Unable to assign the default role." });
+        }
 
         var roles = await _userManager.GetRolesAsync(user);
         var (token, expiresAt) = _tokenService.GenerateToken(user, roles);
@@ -66,10 +68,18 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponseDto>> Login(LoginDto dto)
     {
-        await _loginValidator.ValidateAndThrowAsync(dto);
+        var user = await _userManager.FindByEmailAsync(dto.Email.Trim());
+        if (user is null)
+            return Unauthorized(new { message = "Invalid email or password." });
 
-        var user = await _userManager.FindByEmailAsync(dto.Email);
-        if (user is null || !await _userManager.CheckPasswordAsync(user, dto.Password))
+        var signInResult = await _signInManager.CheckPasswordSignInAsync(
+            user, dto.Password, lockoutOnFailure: true);
+
+        if (signInResult.IsLockedOut)
+            return StatusCode(StatusCodes.Status423Locked,
+                new { message = "Account temporarily locked. Try again later." });
+
+        if (!signInResult.Succeeded)
             return Unauthorized(new { message = "Invalid email or password." });
 
         var roles = await _userManager.GetRolesAsync(user);

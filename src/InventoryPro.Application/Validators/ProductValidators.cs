@@ -32,6 +32,7 @@ public class AdjustStockValidator : AbstractValidator<AdjustStockDto>
     public AdjustStockValidator()
     {
         RuleFor(p => p.QuantityChange).NotEqual(0).WithMessage("Quantity change cannot be zero.");
+        RuleFor(p => p.QuantityChange).InclusiveBetween(-1_000_000, 1_000_000);
         RuleFor(p => p.Reason).NotEmpty().MaximumLength(200);
     }
 }
