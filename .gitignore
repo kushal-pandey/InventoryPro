@@ -1,20 +1,31 @@
-## .NET
-bin/
-obj/
+# .NET build outputs
+**/bin/
+**/obj/
 out/
 
-## Rider / VS / VS Code
+# IDE files
 .vs/
 .vscode/
 .idea/
 *.user
 *.suo
 
-## SQLite dev database (generated at runtime)
+# Local databases
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
 
-## Secrets
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+**/secrets.json
 appsettings.Local.json
+appsettings.*.Local.json
+
+# Certificates and private keys
 *.pfx
+*.pem
+*.key

@@ -17,33 +17,96 @@ using Microsoft.OpenApi.Models;
 var builder = WebApplication.CreateBuilder(args);
 
 // ---------- Database ----------
+
+// ---------- Database ----------
 var provider = builder.Configuration["DatabaseProvider"] ?? "SqlServer";
 
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
     if (provider.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
     {
-        options.UseSqlite(builder.Configuration.GetConnectionString("Sqlite"));
+        var connectionString =
+            builder.Configuration.GetConnectionString("Sqlite");
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException(
+                "ConnectionStrings:Sqlite must be configured.");
+        }
+
+        options.UseSqlite(connectionString);
+    }
+    else if (provider.Equals("SqlServer", StringComparison.OrdinalIgnoreCase))
+    {
+        var connectionString =
+            builder.Configuration.GetConnectionString("SqlServer");
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException(
+                "ConnectionStrings:SqlServer must be configured.");
+        }
+
+        options.UseSqlServer(connectionString);
     }
     else
     {
-        options.UseSqlServer(builder.Configuration.GetConnectionString("SqlServer"));
+        throw new InvalidOperationException(
+            $"Unsupported DatabaseProvider: '{provider}'. " +
+            "Use 'Sqlite' or 'SqlServer'.");
     }
 });
 
+
 // ---------- Identity ----------
+
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
-    {
-        options.Password.RequiredLength = 6;
-        options.Password.RequireNonAlphanumeric = false;
-        options.Password.RequireUppercase = false;
-        options.User.RequireUniqueEmail = true;
-    })
-    .AddEntityFrameworkStores<AppDbContext>()
-    .AddDefaultTokenProviders();
+{
+    options.Password.RequiredLength = 12;
+    options.Password.RequireDigit = true;
+    options.Password.RequireLowercase = true;
+    options.Password.RequireUppercase = true;
+    options.Password.RequireNonAlphanumeric = true;
+
+    options.User.RequireUniqueEmail = true;
+
+    options.Lockout.MaxFailedAccessAttempts = 5;
+    options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+    options.Lockout.AllowedForNewUsers = true;
+})
+.AddEntityFrameworkStores<AppDbContext>()
+.AddDefaultTokenProviders();
+
 
 // ---------- JWT Authentication ----------
 var jwtSection = builder.Configuration.GetSection("Jwt");
+
+
+var jwtKey = jwtSection["Key"];
+var jwtIssuer = jwtSection["Issuer"];
+var jwtAudience = jwtSection["Audience"];
+
+if (string.IsNullOrWhiteSpace(jwtKey) ||
+    Encoding.UTF8.GetByteCount(jwtKey) < 32)
+{
+    throw new InvalidOperationException(
+        "JWT Key must be configured and contain at least 32 bytes.");
+}
+
+if (string.IsNullOrWhiteSpace(jwtIssuer) ||
+    string.IsNullOrWhiteSpace(jwtAudience))
+{
+    throw new InvalidOperationException(
+        "JWT Issuer and Audience must be configured.");
+}
+
+if (!int.TryParse(jwtSection["ExpiryMinutes"], out var expiryMinutes) ||
+    expiryMinutes <= 0)
+{
+    throw new InvalidOperationException(
+        "JWT ExpiryMinutes must be a positive integer.");
+}
+
 builder.Services.AddAuthentication(options =>
     {
         options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -56,11 +119,13 @@ builder.Services.AddAuthentication(options =>
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateLifetime = true,
+            RequireExpirationTime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtSection["Issuer"],
-            ValidAudience = jwtSection["Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSection["Key"]!)),
-            ClockSkew = TimeSpan.FromMinutes(1)
+            ValidIssuer = jwtIssuer,
+            ValidAudience = jwtAudience,
+            IssuerSigningKey = new SymmetricSecurityKey(
+    Encoding.UTF8.GetBytes(jwtKey)),
+            ClockSkew = TimeSpan.FromSeconds(30)
         };
     });
 
@@ -79,11 +144,21 @@ builder.Services.AddAutoMapper(cfg => cfg.AddProfile<MappingProfile>());
 builder.Services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
 
 // ---------- CORS (open for local frontend/demo use) ----------
+
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>()
+    ?? new[] { "http://localhost:5173", "http://localhost:3000" };
+
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", policy =>
-        policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+    options.AddPolicy("AllowedOrigins", policy =>
+        policy
+            .WithOrigins(allowedOrigins)
+            .WithMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+            .WithHeaders("Content-Type", "Authorization"));
 });
+
 
 // ---------- Controllers + Swagger ----------
 builder.Services.AddControllers();
@@ -146,7 +221,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-app.UseCors("AllowAll");
+app.UseCors("AllowedOrigins");
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
