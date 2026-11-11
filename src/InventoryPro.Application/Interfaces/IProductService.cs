@@ -11,5 +11,5 @@ public interface IProductService
     Task UpdateAsync(int id, UpdateProductDto dto);
     Task DeleteAsync(int id);
     Task<ProductDto> AdjustStockAsync(int id, AdjustStockDto dto);
-    Task<IEnumerable<ProductDto>> GetLowStockAsync();
+    Task<PagedResult<ProductDto>> GetLowStockAsync(ListQueryParameters query);
 }

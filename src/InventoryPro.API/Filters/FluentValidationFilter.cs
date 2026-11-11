@@ -1,5 +1,5 @@
 using FluentValidation;
-using Microsoft.AspNetCore.Mvc;
+using InventoryPro.API.Models;
 using Microsoft.AspNetCore.Mvc.Filters;
 
 namespace InventoryPro.API.Filters;
@@ -7,6 +7,7 @@ namespace InventoryPro.API.Filters;
 /// <summary>Runs any registered FluentValidation validator for controller action DTOs.</summary>
 public sealed class FluentValidationFilter : IAsyncActionFilter
 {
+    /// <summary>Validates action DTO arguments and returns a consistent error response on failure.</summary>
     public async Task OnActionExecutionAsync(
         ActionExecutingContext context,
         ActionExecutionDelegate next)
@@ -40,12 +41,13 @@ public sealed class FluentValidationFilter : IAsyncActionFilter
 
         if (failures.Count > 0)
         {
-            context.Result = new BadRequestObjectResult(new
-            {
-                status = StatusCodes.Status400BadRequest,
-                message = "One or more validation errors occurred.",
-                errors = failures
-            });
+            context.Result = new Microsoft.AspNetCore.Mvc.BadRequestObjectResult(
+                ApiErrorResponse.Create(
+                    StatusCodes.Status400BadRequest,
+                    "One or more validation errors occurred.",
+                    failures.ToDictionary(
+                        entry => entry.Key,
+                        entry => entry.Value.ToArray())));
             return;
         }
 

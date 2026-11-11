@@ -1,194 +1,234 @@
-# InventoryPro — Inventory & Order Management System
+# InventoryPro: stock intelligence for small businesses
 
-A full-stack inventory management application built with **ASP.NET Core 8, Entity Framework Core, and a layered architecture**. InventoryPro provides product catalog management, stock tracking, customer management, and order processing through a RESTful API secured with JWT authentication and role-based authorization.
+Small shops, kitchens and clinics lose money in two opposite ways: they **run out of fast sellers**, and they **tie up cash in stock that never sells**. Most inventory tools only *store* quantities. InventoryPro also answers the question the owner actually has every morning:
 
-The project focuses on practical backend engineering: maintainable architecture, validation, transactional order processing, consistent error handling, and automated testing.
+> **What should I reorder today, and how much?**
 
-## Features
+It combines a conventional inventory and order system (products, customers, orders, role-based access) with a **reorder planner** that turns recent sales into days of cover, demand-based reorder points, suggested order quantities, and a count of how much cash is sitting in dead or overstocked items.
 
-- **Authentication & authorization** — JWT-based authentication with Admin and Staff roles.
-- **Product management** — Create, update, search, filter, sort, and paginate products.
-- **Inventory control** — Track stock levels, identify low-stock products, and record stock adjustments.
-- **Order processing** — Create orders with stock validation and transactional inventory updates.
-- **Customer management** — Maintain customer records and support order workflows.
-- **Data integrity** — Entity relationships, transaction handling, and optimistic concurrency support.
-- **Validation & error handling** — FluentValidation and centralized exception handling for consistent API responses.
-- **Automated testing** — xUnit test suite covering application behavior.
-- **API documentation** — Swagger UI for exploring and testing endpoints.
+Built with **ASP.NET Core 8 + EF Core** (layered architecture) and a **React + TypeScript** dashboard.
 
-## Technology Stack
+## What it does
 
-| Area              | Technologies                                               |
-| ----------------- | ---------------------------------------------------------- |
-| Backend           | C#, ASP.NET Core 8 Web API                                 |
-| Architecture      | Domain, Application, Infrastructure, API                   |
-| Database          | SQLite for development; SQL Server configuration available |
-| ORM               | Entity Framework Core, LINQ                                |
-| Authentication    | JWT, role-based authorization                              |
-| Validation        | FluentValidation                                           |
-| Object mapping    | AutoMapper                                                 |
-| Data access       | Repository and Unit of Work patterns                       |
-| API documentation | Swagger / OpenAPI                                          |
-| Testing           | xUnit                                                      |
-| Frontend          | React dashboard planned                                    |
+**Decision support (the differentiator)**
+- **Reorder planner:** ranks products by urgency (out of stock → critical → reorder soon), shows days of cover and a suggested order quantity, and lets you tune sales history, supplier lead time and safety buffer.
+- **Slow-stock detection:** flags products that haven't sold for 60+ days and products with more than 90 days of cover, and totals the cash tied up in them.
+- **Export:** download the purchase list as CSV (formula-injection safe) or copy a ready-to-paste message for a supplier on WhatsApp or SMS.
+- **Dashboard:** stock value, items needing reorder, slow-stock value, a 30-day revenue chart and recent orders, all computed server-side.
 
-## Architecture
+**Core inventory and orders**
+- Products with search, category filter, sorting, pagination, stock adjustments with an audit reason, and soft delete for products that have order history.
+- Orders with multi-line stock validation, transactional creation, enforced status workflow (Pending → Confirmed → Shipped → Delivered; cancelling returns stock).
+- Customers and categories, with role-based access (Admin, Staff).
 
-InventoryPro uses a layered architecture that separates business rules, application workflows, infrastructure, and HTTP concerns.
+## How the reorder planner works
+
+All rules live in one pure, database-free function (`StockForecastCalculator`) so they are unit-tested in isolation.
+
+| Quantity | Formula |
+| --- | --- |
+| Daily demand | units sold in the sales window ÷ window days (cancelled orders ignored) |
+| Days of cover | stock on hand ÷ daily demand |
+| Reorder point | daily demand × (lead time + safety days), never below the product's own reorder level |
+| Order quantity | refill to daily demand × (lead time + safety + 14 days), minus stock on hand |
+| **Critical** | days of cover is shorter than the supplier lead time (it will run out before a new order arrives) |
+| **Not selling** | in stock, older than 60 days, zero sales in 60 days (never suggested for reorder) |
+
+Defaults (30-day window, 7-day lead time, 3-day buffer, 14-day coverage, 60-day dead-stock, 90-day overstock) are configurable in `appsettings.json` under `Insights`, and the first three can be changed per request.
+
+> **Known simplification:** the data model has no *cost price*, so stock value is shown **at selling price**. Adding a cost price is the natural next step for true working-capital figures.
+
+## Technology
+
+| Area | Technologies |
+| --- | --- |
+| Backend | C#, ASP.NET Core 8 Web API, EF Core, LINQ |
+| Architecture | Domain, Application, Infrastructure, API layers; Repository + Unit of Work |
+| Database | SQLite for development; SQL Server supported (provider-specific migrations) |
+| Auth | ASP.NET Core Identity, JWT, role-based authorization, account lockout, rate-limited auth endpoints |
+| Validation / mapping | FluentValidation, AutoMapper |
+| Frontend | React 19, TypeScript (strict), Vite, React Router, Recharts |
+| Testing | xUnit (backend), Vitest + Testing Library + Playwright (frontend) |
+| Delivery | GitHub Actions CI for both stacks, Swagger/OpenAPI, health endpoints |
+
+## Engineering notes
+
+- **No overselling:** stock is changed with conditional database updates inside a transaction, so concurrent orders cannot drive stock negative and a failed line rolls back the whole order.
+- **Safe status changes:** order status transitions are validated server-side; cancelling restores stock in the same transaction.
+- **Query design:** filtering, sorting and pagination are composed in LINQ and run in the database. On SQLite, decimal columns are stored as `double` so price sorting and filtering translate (SQL Server uses `decimal(18,2)`).
+- **Consistent errors:** API failures return `{ "status": 400, "message": "...", "errors": { ... } }`; model validation, authentication/authorization, rate limits, readiness failures and domain errors use the same shape. Unexpected errors are logged and never expose internals.
+- **Security defaults:** the app refuses to start without a JWT key and a CORS allow-list; public self-registration is enabled only for local Development and remains **off in production** (new accounts are Staff, who can read customer data); auth endpoints are rate-limited and accounts lock after repeated failures.
+- **Frontend:** typed API layer, route-level code splitting, stale-response protection, accessible `<dialog>` modals, and role-aware UI (admin-only actions are hidden for Staff; the API still enforces them).
+- **Bounded reads:** every inventory list is paged with a server-side cap; `/api/products/low-stock` uses the same `{ items, pageNumber, pageSize, totalCount, ... }` envelope as other lists.
+- **Request diagnostics:** Information-level request logs include method, path, status, duration, and correlation ID. EF SQL command logging is Warning by default. Local benchmark query-count headers are disabled unless explicitly enabled in Development.
+
+## API endpoints
+
+| Method | Route | Access | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/auth/registration-status` | Public, rate-limited | Report whether public Staff registration is enabled |
+| `POST` | `/api/auth/login` | Public, rate-limited | Authenticate and return a JWT |
+| `POST` | `/api/auth/register` | Public when enabled; otherwise Admin; rate-limited | Create a Staff account |
+| `GET` | `/api/users` | Admin | Paged team directory |
+| `GET` | `/api/users/{id}` | Admin | Read one team member |
+| `POST` | `/api/users` | Admin | Create a Staff or Admin account |
+| `PATCH` | `/api/users/{id}/role` | Admin | Change another user's role |
+| `PATCH` | `/api/users/{id}/active` | Admin | Deactivate/reactivate another user and clear lockout on activation |
+| `GET` | `/api/products` | Admin, Staff | Search, filter, sort, and page products |
+| `GET` | `/api/products/{id}` | Admin, Staff | Read one product |
+| `GET` | `/api/products/low-stock` | Admin, Staff | Paged reorder-level list |
+| `POST`, `PUT`, `PATCH`, `DELETE` | `/api/products...` | Admin | Manage products and adjust stock |
+| `GET` | `/api/categories...` | Admin, Staff | Read categories |
+| `POST`, `DELETE` | `/api/categories...` | Admin | Manage categories |
+| `GET` | `/api/customers...` | Admin, Staff | Read paged customers |
+| `POST` | `/api/customers` | Admin, Staff | Create a customer |
+| `GET` | `/api/orders...` | Admin, Staff | Search, filter by status, sort, and page orders; read details |
+| `POST`, `PATCH` | `/api/orders...` | Admin, Staff | Create orders and transition status |
+| `GET` | `/api/insights/summary` | Admin, Staff | Inventory and sales summary |
+| `GET` | `/api/insights/reorder-suggestions` | Admin, Staff | Reorder planner results |
+| `GET` | `/api/insights/sales-trend` | Admin, Staff | Bounded daily sales history |
+
+Validation and API failures use `{ "status": number, "message": string, "errors": { "field": ["..."] } }`. See [api.http](./api.http) for request examples.
+
+Administrators can manage accounts from the **Team** page. Account roles are limited to Admin and Staff, the password policy matches Identity (12+ characters with uppercase, lowercase, a digit, and a symbol), and administrators cannot change their own role or deactivate their own account. Deactivation and role changes invalidate existing JWT sessions; reactivation clears Identity lockout state. Public registration is disabled by default and in production.
+
+## Phase 2 performance measurements
+
+Measured in Release against the same seeded SQLite database (2,000 benchmark products, 500 customers, 4,000 orders, and 20,000 order lines): 5 warmups and 30 requests per endpoint. Latencies are medians; EF counts are average database commands per request. Order-list projection and the additive `Orders(OrderDate)`/`Orders(Status)` indexes were retained because the combined changes improved the measured order and insight paths. List endpoint responses remain bounded.
+
+| Endpoint | Before median / P95 (ms) | After median / P95 (ms) | EF commands before / after |
+| --- | ---: | ---: | ---: |
+| Products list | 6.0 / 16.3 | 6.5 / 9.4 | 2.0 / 2.0 |
+| Products search | 7.6 / 9.4 | 7.6 / 10.3 | 2.0 / 2.0 |
+| Products sort | 5.6 / 7.2 | 4.6 / 6.4 | 2.0 / 2.0 |
+| Products low-stock | 6.8 / 9.9 | 4.5 / 5.4 | 1.0 / 2.0 |
+| Orders list | 55.8 / 68.8 | 26.5 / 30.8 | 2.0 / 2.0 |
+| Customers list | 5.2 / 6.6 | 4.1 / 4.7 | 2.0 / 2.0 |
+| Insights summary | 39.5 / 62.7 | 33.7 / 41.4 | 4.0 / 4.0 |
+| Reorder suggestions | 40.2 / 58.5 | 32.5 / 42.7 | 3.0 / 3.0 |
+| Sales trend | 10.3 / 13.9 | 8.1 / 9.0 | 1.0 / 1.0 |
+
+Low-stock measurements are directional rather than a strict before/after comparison because the earlier endpoint returned an unpaged collection.
 
 ```text
 InventoryPro/
 ├── src/
-│   ├── InventoryPro.Domain/
-│   │   └── Entities and core domain models
-│   ├── InventoryPro.Application/
-│   │   └── DTOs, interfaces, services,
-│   │       validators, mappings, common models
-│   ├── InventoryPro.Infrastructure/
-│   │   └── EF Core, DbContext, migrations,
-│   │       repositories, Unit of Work
-│   └── InventoryPro.API/
-│       └── Controllers, authentication,
-│           middleware, configuration, Swagger
-├── tests/
-│   └── InventoryPro.Tests/
-├── InventoryPro.sln
-└── README.md
+│   ├── InventoryPro.Domain/          entities
+│   ├── InventoryPro.Application/     DTOs, services, validators, insights engine
+│   ├── InventoryPro.Infrastructure/  EF Core, migrations, repositories
+│   └── InventoryPro.API/             controllers, auth, middleware, Swagger
+├── tests/InventoryPro.Tests/         xUnit tests (SQLite in-memory)
+├── frontend/                         React + TypeScript dashboard
+└── .github/workflows/ci.yml
 ```
 
-### Key engineering decisions
+## Getting started
 
-- **Layered architecture:** Separates domain logic, application services, data access, and API concerns.
-- **Repository and Unit of Work:** Organizes data access and coordinates persistence through EF Core.
-- **Transactional order creation:** Protects order and stock updates from partial completion when an operation fails.
-- **Optimistic concurrency:** Uses a product row-version field to help detect conflicting updates.
-- **Soft deletion:** Preserves products with order history where applicable.
-- **Database-side querying:** Uses composable LINQ for filtering, sorting, and pagination.
-- **Centralized exception handling:** Converts application errors and validation failures into consistent HTTP responses.
+Prerequisites: [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0), [Node.js 22+](https://nodejs.org), Git. No database server is needed for the SQLite development setup.
 
-## Getting Started
-
-### Prerequisites
-
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
-- Git
-- No separate database server is required for the SQLite development setup.
-
-### 1. Clone the repository
+### 1. Backend
 
 ```bash
 git clone https://github.com/kushal-pandey/InventoryPro.git
 cd InventoryPro
-```
 
-### 2. Restore dependencies
-
-```bash
 dotnet restore
-```
-
-### 3. Build the solution
-
-```bash
 dotnet build InventoryPro.sln
-```
 
-### 4. Configure development secrets
-
-The API requires a JWT signing key. Configure it through .NET User Secrets rather than committing a real signing key to source control.
-
-```bash
-dotnet user-secrets set "Jwt:Key" "YOUR_LONG_RANDOM_SECRET" --project src/InventoryPro.API
-```
-
-Initialize User Secrets for the project first if they have not already been initialized:
-
-```bash
+# one-time: JWT signing key (kept out of source control)
 dotnet user-secrets init --project src/InventoryPro.API
+dotnet user-secrets set "Jwt:Key" "REPLACE_WITH_A_LONG_RANDOM_SECRET_OF_32_OR_MORE_CHARS" --project src/InventoryPro.API
 ```
 
-Use the application's configured development database provider and connection string. The development configuration is intended to use SQLite.
+The first administrator is created from **environment variables** (not user-secrets) so no default password ever ships in the repo. Set them in the same terminal before starting the API:
 
-### 5. Run the API
+```bash
+# macOS / Linux / Git Bash
+export INVENTORYPRO_ADMIN_EMAIL="admin@inventorypro.local"
+export INVENTORYPRO_ADMIN_PASSWORD="ChooseAStrongPassword1!"
+
+# Windows PowerShell
+$env:INVENTORYPRO_ADMIN_EMAIL="admin@inventorypro.local"
+$env:INVENTORYPRO_ADMIN_PASSWORD="ChooseAStrongPassword1!"
+```
 
 ```bash
 dotnet run --project src/InventoryPro.API
 ```
 
-Open the Swagger URL printed in the terminal. For the current local setup, this may be:
+Swagger: `http://localhost:5080/swagger`. Health: `/health/live` and `/health/ready` (checks the database).
 
-- `http://localhost:5080/swagger`
-- `https://localhost:5081/swagger`
-
-The API applies configured EF Core migrations on startup. Database seeding depends on the application's configured initialization logic.
-
-> **Development credentials:** If the development database is seeded with a default administrator, use the credentials configured by the seed implementation. Do not expose default credentials or development accounts in a public deployment.
-
-## API Overview
-
-| Area           | Example operations                                                     |
-| -------------- | ---------------------------------------------------------------------- |
-| Authentication | `POST /api/auth/register`, `POST /api/auth/login`                      |
-| Products       | `GET /api/products`, `POST /api/products`, `PUT /api/products/{id}`    |
-| Stock          | `GET /api/products/low-stock`, `PATCH /api/products/{id}/stock`        |
-| Categories     | `GET /api/categories`, `POST /api/categories`                          |
-| Customers      | `GET /api/customers`, `POST /api/customers`                            |
-| Orders         | `GET /api/orders`, `POST /api/orders`, `PATCH /api/orders/{id}/status` |
-
-Endpoints require authentication and/or specific roles according to their controller policies. Consult Swagger for the current request schemas, response formats, query parameters, and authorization requirements.
-
-## Database Configuration
-
-### SQLite development setup
-
-SQLite provides a lightweight way to run the application locally without installing a database server. Use the development configuration and the migrations supported by that provider.
-
-### SQL Server
-
-A SQL Server deployment requires a valid SQL Server connection string, the appropriate provider configuration, and migrations compatible with SQL Server.
-
-Do not assume SQLite migrations can be applied unchanged to SQL Server. Review and generate provider-specific migrations before deploying to a fresh SQL Server database.
-
-Store connection strings and other credentials in User Secrets for local development or environment variables / a managed secret store in deployment environments.
-
-## Running Tests
-
-Run the complete test suite:
+### 2. Frontend
 
 ```bash
-dotnet test InventoryPro.sln --configuration Release
+cd frontend
+npm ci
+cp .env.example .env.local     # points the UI at http://localhost:5080/api
+npm run dev                    # http://localhost:5173
 ```
 
-Build the solution in Release mode:
+Create a Staff account from the sign-in page for local testing, or sign in with the Admin account you configured. To try the planner with realistic data, create a few products, add a customer, place orders, and open **Reorder planner**.
+
+### Creating staff accounts
+
+Public sign-up is disabled by default and in production. For local development, `appsettings.Development.json` enables it so the login page offers account creation; new accounts are Staff and can read customer and order data. Keep `Auth:AllowPublicRegistration` false in production. As an Admin, account creation remains available through `POST /api/auth/register` (Swagger → Authorize first).
+
+## Tests
 
 ```bash
-dotnet build InventoryPro.sln --configuration Release
+dotnet test InventoryPro.sln --configuration Release     # backend unit + API integration tests
+cd frontend && npm run lint && npm test && npm run build # frontend
 ```
 
-The latest reported verification completed successfully with **29 tests passed, 0 failed, and 0 skipped**. Run the commands again after making changes to confirm the current result.
+Highlights: API integration coverage for authentication, role authorization, validation, order rollback and concurrency, insights, rate limiting, CORS and pagination; forecasting rules (every stock-health state, floating-point edge cases), SQLite query regressions and frontend behavior. For a live API smoke check, set the admin environment variables and run `bash scripts/smoke.sh`. All HTTP endpoints and example payloads are in [api.http](./api.http).
 
-## Security Notes
+### Browser end-to-end tests
 
-- Keep JWT signing keys and database credentials out of source control.
-- Enforce authentication and role authorization on protected endpoints.
-- Use HTTPS in deployed environments.
-- Review CORS origins and environment-specific settings before deployment.
-- Replace development credentials and settings before making the application publicly accessible.
+```bash
+cd frontend
+npx playwright install chromium
+npm run test:e2e
+```
 
-## Roadmap
+The Playwright configuration starts the API with a fresh temporary SQLite database and test-only Admin credentials, then starts Vite against that API. The browser journey creates a category, product, customer and order; verifies planner results and stock restoration on cancellation; adds a Staff member; and checks the Staff role cannot access Team or admin-only actions. It also checks a 390x844 viewport for horizontal overflow. The run writes desktop, mobile and dark-theme screenshots to `docs/screenshots/`.
 
-- [ ] Build a responsive React administration dashboard.
-- [ ] Add inventory analytics and visual stock monitoring.
-- [ ] Connect dashboard charts and tables to live API data.
-- [ ] Add deployment instructions and a hosted demo.
-- [ ] Include application screenshots and API examples.
+| Page | Desktop | Mobile (390x844) | Dark theme |
+| --- | --- | --- | --- |
+| Dashboard | [Screenshot](./docs/screenshots/dashboard-desktop.png) | [Screenshot](./docs/screenshots/dashboard-mobile.png) | [Screenshot](./docs/screenshots/dashboard-dark.png) |
+| Reorder planner | [Screenshot](./docs/screenshots/planner-desktop.png) | [Screenshot](./docs/screenshots/planner-mobile.png) | [Screenshot](./docs/screenshots/planner-dark.png) |
+| Products | [Screenshot](./docs/screenshots/products-desktop.png) | [Screenshot](./docs/screenshots/products-mobile.png) | [Screenshot](./docs/screenshots/products-dark.png) |
+| Orders | [Screenshot](./docs/screenshots/orders-desktop.png) | [Screenshot](./docs/screenshots/orders-mobile.png) | [Screenshot](./docs/screenshots/orders-dark.png) |
+
+### Lighthouse
+
+Measured after `npm run build` using `npm run preview` and a desktop Lighthouse audit of the unauthenticated app (which redirects to `/login`):
+
+| Performance | Accessibility | Best Practices |
+| ---: | ---: | ---: |
+| 100 | 98 | 96 |
+
+All Phase 5 targets were met: Performance >= 90, Accessibility >= 95, and Best Practices >= 95.
+
+## Configuration
+
+| Setting | Purpose |
+| --- | --- |
+| `Jwt:Key` (user-secrets / `Jwt__Key`) | JWT signing key, at least 32 characters; required |
+| `INVENTORYPRO_ADMIN_EMAIL` / `INVENTORYPRO_ADMIN_PASSWORD` (environment variables) | creates the first Admin on startup; nothing is seeded if unset |
+| `Cors:AllowedOrigins` | allowed frontend origins; required |
+| `Insights:*` | planner defaults (lookback, lead time, safety, coverage, dead-stock, overstock days) |
+| `Auth:AllowPublicRegistration` | `false` by default and in production; enabled in `Development` only |
+| `DatabaseProvider` / `ConnectionStrings:*` | `Sqlite` (dev) or `SqlServer`. SQL Server needs its own generated migrations |
+| `VITE_API_BASE_URL` (frontend) | API base URL including `/api` |
+
+## Known limitations and roadmap
+
+- The JWT is stored in `localStorage` (readable by any script on the page). For production, issue it in an `httpOnly` SameSite cookie.
+- No refresh tokens, password reset or email verification.
+- Insights aggregate in memory on a bounded result set, which is fine at small-business scale; very large catalogs would move this to SQL views or a background snapshot.
+- Reorder suggestions assume one lead time for all products; per-supplier lead times and cost price are the next features.
+- Roadmap: per-product lead times and suppliers, purchase-order records, expiry/batch tracking (FEFO) for perishables, and deployment with a hosted demo.
 
 ## Author
 
-**Kushal Pandey**
-
-GitHub: [kushal-pandey](https://github.com/kushal-pandey)
-
----
-
-*InventoryPro is a portfolio project demonstrating API development, layered architecture, data integrity, authentication, and automated testing with .NET.*
+**Kushal Pandey** · [github.com/kushal-pandey](https://github.com/kushal-pandey)

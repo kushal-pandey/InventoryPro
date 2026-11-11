@@ -1,9 +1,12 @@
 using System.Text;
 using System.Diagnostics;
+using System.Security.Claims;
 using System.Threading.RateLimiting;
 using FluentValidation;
 using InventoryPro.API.Filters;
 using InventoryPro.API.Middleware;
+using InventoryPro.API.Models;
+using InventoryPro.Application.Insights;
 using InventoryPro.Application.Interfaces;
 using InventoryPro.Application.Mappings;
 using InventoryPro.Application.Services;
@@ -13,17 +16,26 @@ using InventoryPro.Infrastructure.Data;
 using InventoryPro.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
+var benchmarkMode = builder.Environment.IsDevelopment() &&
+                    string.Equals(
+                        Environment.GetEnvironmentVariable("INVENTORYPRO_BENCHMARK_SEED"),
+                        "true",
+                        StringComparison.OrdinalIgnoreCase);
 
 // ---------- Database ----------
 var provider = builder.Configuration["DatabaseProvider"] ?? "SqlServer";
 
-builder.Services.AddDbContext<AppDbContext>(options =>
+if (benchmarkMode)
+    builder.Services.AddScoped<BenchmarkQueryCounter>();
+
+builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 {
     if (provider.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
     {
@@ -46,6 +58,9 @@ builder.Services.AddDbContext<AppDbContext>(options =>
         throw new InvalidOperationException(
             $"Unsupported DatabaseProvider: '{provider}'. Use 'Sqlite' or 'SqlServer'.");
     }
+
+    if (benchmarkMode)
+        options.AddInterceptors(serviceProvider.GetRequiredService<BenchmarkQueryCounter>());
 });
 
 // ---------- Identity ----------
@@ -96,6 +111,51 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
+    options.Events = new JwtBearerEvents
+    {
+        OnTokenValidated = async context =>
+        {
+            var principal = context.Principal;
+            var userId = principal?.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? principal?.FindFirstValue("sub");
+            var tokenStamp = principal?.FindFirstValue("security_stamp");
+
+            if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(tokenStamp))
+            {
+                context.Fail("The token is no longer valid.");
+                return;
+            }
+
+            var userManager = context.HttpContext.RequestServices
+                .GetRequiredService<UserManager<ApplicationUser>>();
+            var user = await userManager.FindByIdAsync(userId);
+            if (user is null || !user.IsActive ||
+                !string.Equals(user.SecurityStamp, tokenStamp, StringComparison.Ordinal))
+            {
+                context.Fail("The token is no longer valid.");
+            }
+        },
+        OnChallenge = async context =>
+        {
+            context.HandleResponse();
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.Headers.WWWAuthenticate = "Bearer";
+            await context.Response.WriteAsJsonAsync(
+                ApiErrorResponse.Create(
+                    StatusCodes.Status401Unauthorized,
+                    "Authentication is required."),
+                context.HttpContext.RequestAborted);
+        },
+        OnForbidden = async context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(
+                ApiErrorResponse.Create(
+                    StatusCodes.Status403Forbidden,
+                    "You do not have permission to perform this action."),
+                context.HttpContext.RequestAborted);
+        }
+    };
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,
@@ -121,6 +181,13 @@ builder.Services.AddScoped<ICustomerService, CustomerService>();
 builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 
+// ---------- Insights (reorder planner) ----------
+var insightsSettings = builder.Configuration.GetSection("Insights").Get<InsightsSettings>() ?? new InsightsSettings();
+insightsSettings.Validate();
+builder.Services.AddSingleton(insightsSettings);
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddScoped<IInsightsService, InsightsService>();
+
 builder.Services.AddAutoMapper(cfg => cfg.AddProfile<MappingProfile>());
 builder.Services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
 
@@ -128,6 +195,15 @@ builder.Services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.ContentType = "application/json";
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            ApiErrorResponse.Create(
+                StatusCodes.Status429TooManyRequests,
+                "Too many requests. Please wait a moment and try again."),
+            cancellationToken);
+    };
     options.AddPolicy("auth", httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -160,7 +236,27 @@ builder.Services.AddCors(options =>
 });
 
 // ---------- Controllers + Swagger ----------
-builder.Services.AddControllers(options => options.Filters.Add<FluentValidationFilter>());
+builder.Services.AddControllers(options => options.Filters.Add<FluentValidationFilter>())
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var errors = context.ModelState
+                .Where(entry => entry.Value?.Errors.Count > 0)
+                .ToDictionary(
+                    entry => entry.Key,
+                    entry => entry.Value!.Errors
+                        .Select(error => string.IsNullOrWhiteSpace(error.ErrorMessage)
+                            ? "The supplied value is invalid."
+                            : error.ErrorMessage)
+                        .ToArray());
+
+            return new BadRequestObjectResult(ApiErrorResponse.Create(
+                StatusCodes.Status400BadRequest,
+                "One or more validation errors occurred.",
+                errors));
+        };
+    });
 builder.Services.AddScoped<FluentValidationFilter>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -171,6 +267,10 @@ builder.Services.AddSwaggerGen(options =>
         Version = "v1",
         Description = "Inventory & order management API with JWT authentication."
     });
+    var xmlFile = $"{typeof(Program).Assembly.GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath))
+        options.IncludeXmlComments(xmlPath);
 
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -215,6 +315,9 @@ using (var scope = app.Services.CreateScope())
         var userManager = services.GetRequiredService<UserManager<ApplicationUser>>();
         var roleManager = services.GetRequiredService<RoleManager<IdentityRole>>();
         await AppDbContextSeed.SeedAsync(context, userManager, roleManager);
+
+        if (benchmarkMode)
+            await BenchmarkDataSeeder.SeedAsync(context);
     }
     else if (app.Environment.IsDevelopment())
     {
@@ -262,6 +365,21 @@ app.Use(async (context, next) =>
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
+if (benchmarkMode)
+{
+    app.Use(async (context, next) =>
+    {
+        var queryCounter = context.RequestServices.GetRequiredService<BenchmarkQueryCounter>();
+        context.Response.OnStarting(() =>
+        {
+            context.Response.Headers["X-EF-Query-Count"] =
+                queryCounter.CommandCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return Task.CompletedTask;
+        });
+        await next();
+    });
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -284,12 +402,17 @@ app.MapGet("/health/ready", async (AppDbContext db, CancellationToken cancellati
     {
         return await db.Database.CanConnectAsync(cancellationToken)
             ? Results.Ok(new { status = "Ready", database = "Reachable" })
-            : Results.Json(new { status = "NotReady", database = "Unreachable" },
+            : Results.Json(ApiErrorResponse.Create(
+                    StatusCodes.Status503ServiceUnavailable,
+                    "The database is unreachable."),
                 statusCode: StatusCodes.Status503ServiceUnavailable);
     }
-    catch
+    catch (Exception exception)
     {
-        return Results.Json(new { status = "NotReady", database = "Unreachable" },
+        app.Logger.LogError(exception, "Database readiness check failed.");
+        return Results.Json(ApiErrorResponse.Create(
+                StatusCodes.Status503ServiceUnavailable,
+                "The database readiness check failed."),
             statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 }).AllowAnonymous();
@@ -298,4 +421,5 @@ app.MapControllers();
 
 app.Run();
 
+/// <summary>Entry point for the InventoryPro API.</summary>
 public partial class Program { }

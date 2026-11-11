@@ -34,6 +34,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .OnDelete(DeleteBehavior.Restrict);
         });
 
+        builder.Entity<ApplicationUser>()
+            .Property(user => user.IsActive)
+            .HasDefaultValue(true);
+
         builder.Entity<Category>(entity =>
         {
             entity.Property(c => c.Name).IsRequired().HasMaxLength(100);
@@ -51,6 +55,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.Property(o => o.OrderNumber).IsRequired().HasMaxLength(30);
             entity.HasIndex(o => o.OrderNumber).IsUnique();
+            entity.HasIndex(o => o.OrderDate);
+            entity.HasIndex(o => o.Status);
             entity.Property(o => o.TotalAmount).HasColumnType("decimal(18,2)");
 
             entity.HasOne(o => o.Customer)
@@ -73,5 +79,20 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(oi => oi.ProductId)
                   .OnDelete(DeleteBehavior.Restrict);
         });
+
+        // EF Core's SQLite provider cannot translate ORDER BY or comparisons on 'decimal' columns,
+        // which breaks sorting/filtering by price in the SQLite dev setup. Convert to double for SQLite
+        // only; the declared column type is unchanged, so no new migration is needed.
+        if (Database.IsSqlite())
+        {
+            var decimalProperties = builder.Model.GetEntityTypes()
+                .SelectMany(t => t.GetProperties()
+                    .Where(p => p.ClrType == typeof(decimal))
+                    .Select(p => (EntityType: t.ClrType, PropertyName: p.Name)))
+                .ToList();
+
+            foreach (var (entityType, propertyName) in decimalProperties)
+                builder.Entity(entityType).Property(propertyName).HasConversion<double>();
+        }
     }
 }

@@ -239,9 +239,9 @@ public sealed class ProductServiceTests : IAsyncLifetime
             reorderLevel: 5,
             isActive: false);
 
-        var result = (await _service.GetLowStockAsync()).ToList();
+        var result = await _service.GetLowStockAsync(new ListQueryParameters());
 
-        var product = Assert.Single(result);
+        var product = Assert.Single(result.Items);
         Assert.Equal("LOW-001", product.Sku);
         Assert.True(product.LowStock);
     }

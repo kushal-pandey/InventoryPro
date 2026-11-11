@@ -18,25 +18,64 @@ public class OrderService : IOrderService
         _mapper = mapper;
     }
 
-    public async Task<PagedResult<OrderDto>> GetAllAsync(ListQueryParameters query)
+    public async Task<PagedResult<OrderDto>> GetAllAsync(OrderQueryParameters query)
     {
-        var source = _uow.Orders.Query()
-            .Include(o => o.Customer)
-            .Include(o => o.OrderItems).ThenInclude(oi => oi.Product)
-            .AsNoTracking()
-            .OrderByDescending(o => o.OrderDate)
-            .ThenByDescending(o => o.Id);
+        var source = _uow.Orders.Query().AsNoTracking();
+        if (query.Status.HasValue)
+            source = source.Where(order => order.Status == query.Status.Value);
+
+        var search = query.Search?.Trim().ToLowerInvariant();
+        if (!string.IsNullOrEmpty(search))
+        {
+            source = source.Where(order =>
+                order.OrderNumber.ToLower().Contains(search) ||
+                order.Customer.FullName.ToLower().Contains(search) ||
+                order.OrderItems.Any(item => item.Product.Name.ToLower().Contains(search)));
+        }
 
         var totalCount = await source.CountAsync();
         var pageNumber = query.SafePageNumber;
         var pageSize = query.SafePageSize;
-        var orders = await source.Skip((pageNumber - 1) * pageSize)
+        var ordered = (query.SortBy, query.SortDescending) switch
+        {
+            ("orderDate", false) => source.OrderBy(o => o.OrderDate).ThenBy(o => o.Id),
+            ("orderNumber", false) => source.OrderBy(o => o.OrderNumber).ThenBy(o => o.Id),
+            ("orderNumber", true) => source.OrderByDescending(o => o.OrderNumber).ThenByDescending(o => o.Id),
+            ("customer", false) => source.OrderBy(o => o.Customer.FullName).ThenBy(o => o.Id),
+            ("customer", true) => source.OrderByDescending(o => o.Customer.FullName).ThenByDescending(o => o.Id),
+            ("total", false) => source.OrderBy(o => o.TotalAmount).ThenBy(o => o.Id),
+            ("total", true) => source.OrderByDescending(o => o.TotalAmount).ThenByDescending(o => o.Id),
+            ("orderDate", true) => source.OrderByDescending(o => o.OrderDate).ThenByDescending(o => o.Id),
+            _ => source.OrderByDescending(o => o.OrderDate).ThenByDescending(o => o.Id)
+        };
+        var orders = await ordered
+            .Skip((pageNumber - 1) * pageSize)
             .Take(pageSize)
+            .Select(order => new OrderDto
+            {
+                Id = order.Id,
+                OrderNumber = order.OrderNumber,
+                CustomerId = order.CustomerId,
+                CustomerName = order.Customer.FullName,
+                Status = order.Status,
+                TotalAmount = order.TotalAmount,
+                OrderDate = order.OrderDate,
+                Items = order.OrderItems
+                    .OrderBy(item => item.Id)
+                    .Select(item => new OrderItemDto
+                    {
+                        ProductId = item.ProductId,
+                        ProductName = item.Product.Name,
+                        Quantity = item.Quantity,
+                        UnitPrice = item.UnitPrice
+                    })
+                    .ToList()
+            })
             .ToListAsync();
 
         return new PagedResult<OrderDto>
         {
-            Items = _mapper.Map<List<OrderDto>>(orders),
+            Items = orders,
             PageNumber = pageNumber,
             PageSize = pageSize,
             TotalCount = totalCount

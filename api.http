@@ -1,0 +1,233 @@
+@baseUrl = http://localhost:5080
+@token = paste-admin-jwt-here
+@categoryId = 1
+@productId = 1
+@customerId = 1
+@orderId = 1
+@userId = paste-user-id-here
+
+### Health
+GET {{baseUrl}}/health/live
+
+###
+GET {{baseUrl}}/health/ready
+
+### Authentication
+GET {{baseUrl}}/api/auth/registration-status
+
+### Register a Staff account (public in Development; Admin-only otherwise)
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Staff User",
+  "email": "staff@example.test",
+  "password": "StaffAccount!2026"
+}
+
+###
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@inventorypro.local",
+  "password": "replace-with-admin-password"
+}
+
+### Create Staff account (Admin bearer token; available even when public registration is disabled)
+POST {{baseUrl}}/api/auth/register
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "fullName": "Staff User",
+  "email": "staff@example.test",
+  "password": "StaffAccount!2026"
+}
+
+### Admin user management
+GET {{baseUrl}}/api/users?pageNumber=1&pageSize=20
+Authorization: ******
+
+###
+GET {{baseUrl}}/api/users/{{userId}}
+Authorization: ******
+
+###
+POST {{baseUrl}}/api/users
+Authorization: ******
+Content-Type: application/json
+
+{
+  "fullName": "New Team Member",
+  "email": "new-member@example.test",
+  "password": "TeamMember!2026",
+  "role": "Staff"
+}
+
+###
+PATCH {{baseUrl}}/api/users/{{userId}}/role
+Authorization: ******
+Content-Type: application/json
+
+{
+  "role": "Admin"
+}
+
+###
+PATCH {{baseUrl}}/api/users/{{userId}}/active
+Authorization: ******
+Content-Type: application/json
+
+{
+  "isActive": false
+}
+
+### Missing user (expect 404)
+GET {{baseUrl}}/api/users/not-a-user-id
+Authorization: ******
+
+### Products
+GET {{baseUrl}}/api/products?pageNumber=1&pageSize=10&sortBy=name
+Authorization: Bearer {{token}}
+
+###
+GET {{baseUrl}}/api/products/{{productId}}
+Authorization: Bearer {{token}}
+
+###
+GET {{baseUrl}}/api/products/low-stock?pageNumber=1&pageSize=20
+Authorization: Bearer {{token}}
+
+###
+POST {{baseUrl}}/api/products
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Sample product",
+  "description": "REST Client example",
+  "sku": "HTTP-SAMPLE-001",
+  "price": 10,
+  "stockQuantity": 10,
+  "reorderLevel": 2,
+  "categoryId": {{categoryId}}
+}
+
+###
+PUT {{baseUrl}}/api/products/{{productId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Updated sample product",
+  "description": "REST Client example",
+  "price": 12,
+  "reorderLevel": 2,
+  "categoryId": {{categoryId}},
+  "isActive": true
+}
+
+###
+PATCH {{baseUrl}}/api/products/{{productId}}/stock
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "quantityChange": 5,
+  "reason": "REST Client sample adjustment"
+}
+
+###
+DELETE {{baseUrl}}/api/products/{{productId}}
+Authorization: Bearer {{token}}
+
+### Categories
+GET {{baseUrl}}/api/categories?pageNumber=1&pageSize=10
+Authorization: Bearer {{token}}
+
+###
+GET {{baseUrl}}/api/categories/{{categoryId}}
+Authorization: Bearer {{token}}
+
+###
+POST {{baseUrl}}/api/categories
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Sample category",
+  "description": "REST Client example"
+}
+
+###
+DELETE {{baseUrl}}/api/categories/{{categoryId}}
+Authorization: Bearer {{token}}
+
+### Customers
+GET {{baseUrl}}/api/customers?pageNumber=1&pageSize=10
+Authorization: Bearer {{token}}
+
+###
+GET {{baseUrl}}/api/customers/{{customerId}}
+Authorization: Bearer {{token}}
+
+###
+POST {{baseUrl}}/api/customers
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "fullName": "Sample Customer",
+  "email": "customer@example.test",
+  "phone": "555-0100",
+  "address": "Example address"
+}
+
+### Orders
+GET {{baseUrl}}/api/orders?pageNumber=1&pageSize=10
+Authorization: Bearer {{token}}
+
+###
+GET {{baseUrl}}/api/orders?pageNumber=1&pageSize=10&search=sample&status=0&sortBy=orderDate&sortDescending=true
+Authorization: Bearer {{token}}
+
+###
+GET {{baseUrl}}/api/orders/{{orderId}}
+Authorization: Bearer {{token}}
+
+###
+POST {{baseUrl}}/api/orders
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "customerId": {{customerId}},
+  "items": [
+    {
+      "productId": {{productId}},
+      "quantity": 1
+    }
+  ]
+}
+
+###
+PATCH {{baseUrl}}/api/orders/{{orderId}}/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "status": 4
+}
+
+### Insights
+GET {{baseUrl}}/api/insights/summary
+Authorization: Bearer {{token}}
+
+###
+GET {{baseUrl}}/api/insights/reorder-suggestions?lookbackDays=30&leadTimeDays=7&safetyDays=3&limit=50&includeHealthy=false
+Authorization: Bearer {{token}}
+
+###
+GET {{baseUrl}}/api/insights/sales-trend?days=30
+Authorization: Bearer {{token}}

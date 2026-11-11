@@ -176,12 +176,27 @@ public class ProductService : IProductService
         return await GetByIdAsync(id);
     }
 
-    public async Task<IEnumerable<ProductDto>> GetLowStockAsync()
+    public async Task<PagedResult<ProductDto>> GetLowStockAsync(ListQueryParameters query)
     {
-        var products = await _uow.Products.Query().Include(p => p.Category)
+        var source = _uow.Products.Query()
             .Where(p => p.StockQuantity <= p.ReorderLevel && p.IsActive)
+            .OrderBy(p => p.StockQuantity)
+            .ThenBy(p => p.Id);
+        var totalCount = await source.CountAsync();
+        var pageNumber = query.SafePageNumber;
+        var pageSize = query.SafePageSize;
+        var products = await source.Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .AsNoTracking()
+            .ProjectTo<ProductDto>(_mapper.ConfigurationProvider)
             .ToListAsync();
 
-        return _mapper.Map<IEnumerable<ProductDto>>(products);
+        return new PagedResult<ProductDto>
+        {
+            Items = products,
+            PageNumber = pageNumber,
+            PageSize = pageSize,
+            TotalCount = totalCount
+        };
     }
 }

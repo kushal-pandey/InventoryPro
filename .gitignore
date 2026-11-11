@@ -3,6 +3,10 @@
 **/obj/
 out/
 
+# Playwright artifacts
+/frontend/playwright-report/
+/frontend/test-results/
+
 # IDE files
 .vs/
 .vscode/
