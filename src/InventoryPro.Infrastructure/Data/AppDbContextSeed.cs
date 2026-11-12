@@ -2,21 +2,20 @@
 using InventoryPro.Domain.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Hosting;
 
 namespace InventoryPro.Infrastructure.Data;
 
-/// <summary>
-/// Seeds application roles, an optional administrator account, and a small
-/// starter catalog so the API can be used immediately after setup.
-/// Configure INVENTORYPRO_ADMIN_EMAIL and INVENTORYPRO_ADMIN_PASSWORD
-/// environment variables to create the initial administrator account.
-/// </summary>
+
 public static class AppDbContextSeed
 {
     public static async Task SeedAsync(
-        AppDbContext context,
-        UserManager<ApplicationUser> userManager,
-        RoleManager<IdentityRole> roleManager)
+    AppDbContext context,
+    UserManager<ApplicationUser> userManager,
+    RoleManager<IdentityRole> roleManager,
+    IHostEnvironment environment,
+    ILogger? logger = null)
     {
         // Seed application roles.
         string[] roles = { "Admin", "Staff" };
@@ -40,12 +39,29 @@ public static class AppDbContextSeed
             }
         }
 
-        // Seed an administrator only when credentials are explicitly configured.
+
         var adminEmail = Environment.GetEnvironmentVariable(
             "INVENTORYPRO_ADMIN_EMAIL");
 
         var adminPassword = Environment.GetEnvironmentVariable(
             "INVENTORYPRO_ADMIN_PASSWORD");
+
+        if (environment.IsProduction())
+        {
+            if (string.IsNullOrWhiteSpace(adminEmail) ||
+                string.IsNullOrWhiteSpace(adminPassword))
+            {
+                logger?.LogWarning(
+                    "Production environment is missing INVENTORYPRO_ADMIN_EMAIL or INVENTORYPRO_ADMIN_PASSWORD. No initial administrator account will be created.");
+            }
+        }
+        {
+            if (string.IsNullOrWhiteSpace(adminEmail) || string.IsNullOrWhiteSpace(adminPassword))
+            {
+                logger?.LogWarning(
+                    "Production environment is missing INVENTORYPRO_ADMIN_EMAIL or INVENTORYPRO_ADMIN_PASSWORD. No initial administrator account will be created.");
+            }
+        }
 
         if (!string.IsNullOrWhiteSpace(adminEmail) &&
             !string.IsNullOrWhiteSpace(adminPassword))

@@ -1,0 +1,16 @@
+@'
+.git
+.github
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+.venv/
+.vscode/
+.idea/
+frontend/coverage/
+TestResults/
+*.user
+*.suo
+postgresql-initial-schema.sql
+'@ | Set-Content -Path .\.dockerignore -Encoding utf8

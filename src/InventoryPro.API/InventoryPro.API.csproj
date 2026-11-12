@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\InventoryPro.Application\InventoryPro.Application.csproj" />
     <ProjectReference Include="..\InventoryPro.Infrastructure\InventoryPro.Infrastructure.csproj" />
+    <ProjectReference Include="..\InventoryPro.PostgreSqlMigrations\InventoryPro.PostgreSqlMigrations.csproj" />
   </ItemGroup>
 
 </Project>

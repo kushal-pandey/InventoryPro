@@ -358,6 +358,41 @@ public sealed class ApiIntegrationTests
     }
 
     [Fact]
+    public async Task Anonymous_users_cannot_access_admin_only_endpoints()
+    {
+        using var host = new ApiTestHost();
+        using var client = host.CreateClient();
+
+        var responses = new[]
+        {
+            await client.GetAsync("/api/users"),
+            await client.GetAsync("/api/users/integration-user-id"),
+            await client.PostAsJsonAsync("/api/users", new
+            {
+                fullName = "Unauthorized User",
+                email = "unauthorized@integration.test",
+                password = "Unauthorized!2026",
+                role = "Staff"
+            }),
+            await client.PatchAsJsonAsync("/api/users/integration-user-id/role", new { role = "Staff" }),
+            await client.PatchAsJsonAsync("/api/users/integration-user-id/active", new { isActive = false }),
+            await client.PostAsJsonAsync("/api/products", new { }),
+            await client.PutAsJsonAsync("/api/products/1", new { }),
+            await client.PatchAsJsonAsync("/api/products/1/stock", new { }),
+            await client.DeleteAsync("/api/products/1"),
+            await client.PostAsJsonAsync("/api/categories", new { }),
+            await client.DeleteAsync("/api/categories/1")
+        };
+
+        using var responseCollection = new ResponseCollection(responses);
+        Assert.All(responseCollection.Items, response =>
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode));
+
+        foreach (var response in responseCollection.Items)
+            await AssertApiErrorShapeAsync(response, 401);
+    }
+
+    [Fact]
     public async Task Staff_can_create_customers_and_orders()
     {
         using var host = new ApiTestHost();
@@ -375,6 +410,103 @@ public sealed class ApiIntegrationTests
 
         using var orderResponse = await client.PostAsJsonAsync("/api/orders", OrderPayload(customerId, productId, 1));
         Assert.Equal(HttpStatusCode.Created, orderResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Order_creation_rejects_non_positive_and_excessive_quantities()
+    {
+        using var host = new ApiTestHost();
+        using var client = host.CreateClient();
+        await SetAdminTokenAsync(client);
+        var categoryId = await CreateCategoryAsync(client);
+        var productId = await CreateProductAsync(client, categoryId, stock: 10);
+        var customerId = await CreateCustomerAsync(client);
+
+        foreach (var quantity in new[] { 0, -1, 1_000_001 })
+        {
+            using var response = await client.PostAsJsonAsync(
+                "/api/orders",
+                OrderPayload(customerId, productId, quantity));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            await AssertApiErrorShapeAsync(response, 400);
+        }
+
+        Assert.Equal(10, await GetStockAsync(client, productId));
+        using var orders = await client.GetAsync("/api/orders");
+        using var ordersBody = await JsonDocument.ParseAsync(await orders.Content.ReadAsStreamAsync());
+        Assert.Empty(ordersBody.RootElement.GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Order_status_transitions_reject_pending_and_disallowed_backward_transitions()
+    {
+        using var host = new ApiTestHost();
+        using var client = host.CreateClient();
+        await SetAdminTokenAsync(client);
+        var categoryId = await CreateCategoryAsync(client);
+        var productId = await CreateProductAsync(client, categoryId, stock: 10);
+        var customerId = await CreateCustomerAsync(client);
+
+        async Task<int> CreateOrderAsync()
+        {
+            using var response = await client.PostAsJsonAsync(
+                "/api/orders",
+                OrderPayload(customerId, productId, 1));
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+            return body.RootElement.GetProperty("id").GetInt32();
+        }
+
+        async Task SetStatusAsync(int orderId, int status)
+        {
+            using var response = await client.PatchAsJsonAsync(
+                $"/api/orders/{orderId}/status",
+                new { status });
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        var pendingOrderId = await CreateOrderAsync();
+        using (var pendingToPending = await client.PatchAsJsonAsync(
+                   $"/api/orders/{pendingOrderId}/status",
+                   new { status = 0 }))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, pendingToPending.StatusCode);
+            await AssertApiErrorShapeAsync(pendingToPending, 400);
+        }
+
+        var shippedOrderId = await CreateOrderAsync();
+        await SetStatusAsync(shippedOrderId, 1);
+        await SetStatusAsync(shippedOrderId, 2);
+        using (var shippedToConfirmed = await client.PatchAsJsonAsync(
+                   $"/api/orders/{shippedOrderId}/status",
+                   new { status = 1 }))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, shippedToConfirmed.StatusCode);
+            await AssertApiErrorShapeAsync(shippedToConfirmed, 409);
+        }
+
+        var deliveredOrderId = await CreateOrderAsync();
+        await SetStatusAsync(deliveredOrderId, 1);
+        await SetStatusAsync(deliveredOrderId, 2);
+        await SetStatusAsync(deliveredOrderId, 3);
+        using (var deliveredToShipped = await client.PatchAsJsonAsync(
+                   $"/api/orders/{deliveredOrderId}/status",
+                   new { status = 2 }))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, deliveredToShipped.StatusCode);
+            await AssertApiErrorShapeAsync(deliveredToShipped, 409);
+        }
+
+        var cancelledOrderId = await CreateOrderAsync();
+        await SetStatusAsync(cancelledOrderId, 4);
+        using (var cancelledToConfirmed = await client.PatchAsJsonAsync(
+                   $"/api/orders/{cancelledOrderId}/status",
+                   new { status = 1 }))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, cancelledToConfirmed.StatusCode);
+            await AssertApiErrorShapeAsync(cancelledToConfirmed, 409);
+        }
     }
 
     [Fact]

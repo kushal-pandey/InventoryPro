@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Security.Claims;
 using System.Threading.RateLimiting;
 using FluentValidation;
+using InventoryPro.API;
 using InventoryPro.API.Filters;
 using InventoryPro.API.Middleware;
 using InventoryPro.API.Models;
@@ -23,6 +24,8 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
+StartupConfigurationValidator.ValidateProductionGuards(builder.Configuration, builder.Environment);
+
 var benchmarkMode = builder.Environment.IsDevelopment() &&
                     string.Equals(
                         Environment.GetEnvironmentVariable("INVENTORYPRO_BENCHMARK_SEED"),
@@ -53,10 +56,22 @@ builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 
         options.UseSqlServer(connectionString);
     }
+else if (provider.Equals("PostgreSql", StringComparison.OrdinalIgnoreCase))
+{
+    var connectionString = builder.Configuration.GetConnectionString("PostgreSql");
+
+    if (string.IsNullOrWhiteSpace(connectionString))
+        throw new InvalidOperationException(
+            "ConnectionStrings:PostgreSql must be configured.");
+
+    options.UseNpgsql(
+        connectionString,
+        npgsql => npgsql.MigrationsAssembly("InventoryPro.PostgreSqlMigrations"));
+}
     else
     {
         throw new InvalidOperationException(
-            $"Unsupported DatabaseProvider: '{provider}'. Use 'Sqlite' or 'SqlServer'.");
+            $"Unsupported DatabaseProvider: '{provider}'. Use 'Sqlite', 'SqlServer' or 'PostgreSQL'.");
     }
 
     if (benchmarkMode)
@@ -314,7 +329,8 @@ using (var scope = app.Services.CreateScope())
     {
         var userManager = services.GetRequiredService<UserManager<ApplicationUser>>();
         var roleManager = services.GetRequiredService<RoleManager<IdentityRole>>();
-        await AppDbContextSeed.SeedAsync(context, userManager, roleManager);
+        var logger = services.GetRequiredService<ILoggerFactory>().CreateLogger("AppDbContextSeed");
+        await AppDbContextSeed.SeedAsync(context, userManager, roleManager, app.Environment, logger);
 
         if (benchmarkMode)
             await BenchmarkDataSeeder.SeedAsync(context);
