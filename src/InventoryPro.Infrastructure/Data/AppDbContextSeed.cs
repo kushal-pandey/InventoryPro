@@ -84,6 +84,32 @@ public static class AppDbContextSeed
                 }
             }
 
+            else if (string.Equals(
+    Environment.GetEnvironmentVariable("INVENTORYPRO_ADMIN_RESET_PASSWORD"),
+    "true",
+    StringComparison.OrdinalIgnoreCase))
+            {
+                var resetToken = await userManager.GeneratePasswordResetTokenAsync(admin);
+
+                var resetResult = await userManager.ResetPasswordAsync(
+                    admin,
+                    resetToken,
+                    adminPassword);
+
+                if (!resetResult.Succeeded)
+                {
+                    var errors = string.Join(
+                        "; ",
+                        resetResult.Errors.Select(error => error.Description));
+
+                    throw new InvalidOperationException(
+                        $"Failed to reset the administrator password: {errors}");
+                }
+
+                logger?.LogInformation(
+                    "Configured administrator password was successfully reset.");
+            }
+
             // Ensure the configured administrator has the Admin role.
             if (!await userManager.IsInRoleAsync(admin, "Admin"))
             {
