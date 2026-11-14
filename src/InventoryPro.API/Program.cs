@@ -56,18 +56,18 @@ builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 
         options.UseSqlServer(connectionString);
     }
-else if (provider.Equals("PostgreSql", StringComparison.OrdinalIgnoreCase))
-{
-    var connectionString = builder.Configuration.GetConnectionString("PostgreSql");
+    else if (provider.Equals("PostgreSql", StringComparison.OrdinalIgnoreCase))
+    {
+        var connectionString = builder.Configuration.GetConnectionString("PostgreSql");
 
-    if (string.IsNullOrWhiteSpace(connectionString))
-        throw new InvalidOperationException(
-            "ConnectionStrings:PostgreSql must be configured.");
+        if (string.IsNullOrWhiteSpace(connectionString))
+            throw new InvalidOperationException(
+                "ConnectionStrings:PostgreSql must be configured.");
 
-    options.UseNpgsql(
-        connectionString,
-        npgsql => npgsql.MigrationsAssembly("InventoryPro.PostgreSqlMigrations"));
-}
+        options.UseNpgsql(
+            connectionString,
+            npgsql => npgsql.MigrationsAssembly("InventoryPro.PostgreSqlMigrations"));
+    }
     else
     {
         throw new InvalidOperationException(
@@ -396,12 +396,15 @@ if (benchmarkMode)
     });
 }
 
-if (app.Environment.IsDevelopment())
+
+if (app.Environment.IsDevelopment() ||
+    builder.Configuration.GetValue<bool>("Swagger:Enabled"))
 {
     app.UseSwagger();
     app.UseSwaggerUI(options =>
         options.SwaggerEndpoint("/swagger/v1/swagger.json", "InventoryPro API v1"));
 }
+
 
 app.UseHttpsRedirection();
 app.UseCors("AllowedOrigins");
