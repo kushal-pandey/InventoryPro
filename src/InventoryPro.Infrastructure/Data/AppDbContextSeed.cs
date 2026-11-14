@@ -46,21 +46,12 @@ public static class AppDbContextSeed
         var adminPassword = Environment.GetEnvironmentVariable(
             "INVENTORYPRO_ADMIN_PASSWORD");
 
-        if (environment.IsProduction())
+        if (environment.IsProduction() &&
+    (string.IsNullOrWhiteSpace(adminEmail) ||
+     string.IsNullOrWhiteSpace(adminPassword)))
         {
-            if (string.IsNullOrWhiteSpace(adminEmail) ||
-                string.IsNullOrWhiteSpace(adminPassword))
-            {
-                logger?.LogWarning(
-                    "Production environment is missing INVENTORYPRO_ADMIN_EMAIL or INVENTORYPRO_ADMIN_PASSWORD. No initial administrator account will be created.");
-            }
-        }
-        {
-            if (string.IsNullOrWhiteSpace(adminEmail) || string.IsNullOrWhiteSpace(adminPassword))
-            {
-                logger?.LogWarning(
-                    "Production environment is missing INVENTORYPRO_ADMIN_EMAIL or INVENTORYPRO_ADMIN_PASSWORD. No initial administrator account will be created.");
-            }
+            logger?.LogWarning(
+                "Production environment is missing INVENTORYPRO_ADMIN_EMAIL or INVENTORYPRO_ADMIN_PASSWORD. No initial administrator account will be created.");
         }
 
         if (!string.IsNullOrWhiteSpace(adminEmail) &&
