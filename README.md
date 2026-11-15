@@ -127,6 +127,19 @@ InventoryPro/
 └── .github/workflows/ci.yml
 ```
 
+### Runtime architecture
+
+```mermaid
+flowchart LR
+    U[Browser] --> F[React + TypeScript\nRender Static Site]
+    F -->|HTTPS / JSON + JWT| A[ASP.NET Core 8 API\nRender Web Service]
+    A --> D[Domain + Application layers]
+    D --> I[Infrastructure / EF Core]
+    I --> P[(Neon PostgreSQL)]
+```
+
+The frontend is a static client; business rules, authorization, validation, and persistence remain on the API. The production database connection and JWT signing key are injected through Render environment variables rather than stored in source control.
+
 ## Getting started
 
 Prerequisites: [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0), [Node.js 22+](https://nodejs.org), Git. No database server is needed for the SQLite development setup.
