@@ -8,6 +8,10 @@ It combines a conventional inventory and order system (products, customers, orde
 
 Built with **ASP.NET Core 8 + EF Core** (layered architecture) and a **React + TypeScript** dashboard.
 
+**Live deployment:** [Open InventoryPro](https://inventorypro-frontend-aj9j.onrender.com) · [Backend API](https://inventorypro-gshy.onrender.com) · [Source code](https://github.com/kushal-pandey/InventoryPro)
+
+The frontend and API are hosted on Render. The deployed API uses **Neon PostgreSQL**; local development and automated tests use SQLite.
+
 ## What it does
 
 **Decision support (the differentiator)**
@@ -44,7 +48,7 @@ Defaults (30-day window, 7-day lead time, 3-day buffer, 14-day coverage, 60-day 
 | --- | --- |
 | Backend | C#, ASP.NET Core 8 Web API, EF Core, LINQ |
 | Architecture | Domain, Application, Infrastructure, API layers; Repository + Unit of Work |
-| Database | SQLite for development; SQL Server supported (provider-specific migrations) |
+| Database | Neon PostgreSQL (deployed); SQLite (local development/tests); SQL Server provider included (separate migrations required) |
 | Auth | ASP.NET Core Identity, JWT, role-based authorization, account lockout, rate-limited auth endpoints |
 | Validation / mapping | FluentValidation, AutoMapper |
 | Frontend | React 19, TypeScript (strict), Vite, React Router, Recharts |
@@ -115,12 +119,26 @@ InventoryPro/
 ├── src/
 │   ├── InventoryPro.Domain/          entities
 │   ├── InventoryPro.Application/     DTOs, services, validators, insights engine
-│   ├── InventoryPro.Infrastructure/  EF Core, migrations, repositories
+│   ├── InventoryPro.Infrastructure/  EF Core, repositories, provider setup
+│   ├── InventoryPro.PostgreSqlMigrations/ PostgreSQL-specific migrations
 │   └── InventoryPro.API/             controllers, auth, middleware, Swagger
 ├── tests/InventoryPro.Tests/         xUnit tests (SQLite in-memory)
 ├── frontend/                         React + TypeScript dashboard
 └── .github/workflows/ci.yml
 ```
+
+### Runtime architecture
+
+```mermaid
+flowchart LR
+    U[Browser] --> F[React + TypeScript\nRender Static Site]
+    F -->|HTTPS / JSON + JWT| A[ASP.NET Core 8 API\nRender Web Service]
+    A --> D[Domain + Application layers]
+    D --> I[Infrastructure / EF Core]
+    I --> P[(Neon PostgreSQL)]
+```
+
+The frontend is a static client; business rules, authorization, validation, and persistence remain on the API. The production database connection and JWT signing key are injected through Render environment variables rather than stored in source control.
 
 ## Getting started
 
@@ -218,8 +236,17 @@ All Phase 5 targets were met: Performance >= 90, Accessibility >= 95, and Best P
 | `Cors:AllowedOrigins` | allowed frontend origins; required |
 | `Insights:*` | planner defaults (lookback, lead time, safety, coverage, dead-stock, overstock days) |
 | `Auth:AllowPublicRegistration` | `false` by default and in production; enabled in `Development` only |
-| `DatabaseProvider` / `ConnectionStrings:*` | `Sqlite` (dev) or `SqlServer`. SQL Server needs its own generated migrations |
+| `DatabaseProvider` / `ConnectionStrings:*` | `Sqlite`, `PostgreSQL`, or `SqlServer`; PostgreSQL uses `ConnectionStrings:PostgreSql` and the `InventoryPro.PostgreSqlMigrations` assembly. SQL Server requires its own migrations |
 | `VITE_API_BASE_URL` (frontend) | API base URL including `/api` |
+
+## Deployment
+
+- **Frontend:** Render Static Site — [inventorypro-frontend-aj9j.onrender.com](https://inventorypro-frontend-aj9j.onrender.com).
+- **Backend:** Render Web Service — [inventorypro-gshy.onrender.com](https://inventorypro-gshy.onrender.com).
+- **Database:** Neon PostgreSQL. The production connection string is supplied through Render environment configuration and is not committed to this repository.
+- **Frontend API target:** configure `VITE_API_BASE_URL` at build time to the deployed API base URL ending in `/api`.
+- **CORS:** configure the API's `Cors:AllowedOrigins` with the exact deployed frontend origin. Do not use `*` or add local development origins to production.
+- **Production secrets:** supply `Jwt:Key`, `ConnectionStrings:PostgreSql`, and the required CORS/auth settings through the hosting provider's secret/environment settings. Never commit credentials.
 
 ## Known limitations and roadmap
 
@@ -227,7 +254,7 @@ All Phase 5 targets were met: Performance >= 90, Accessibility >= 95, and Best P
 - No refresh tokens, password reset or email verification.
 - Insights aggregate in memory on a bounded result set, which is fine at small-business scale; very large catalogs would move this to SQL views or a background snapshot.
 - Reorder suggestions assume one lead time for all products; per-supplier lead times and cost price are the next features.
-- Roadmap: per-product lead times and suppliers, purchase-order records, expiry/batch tracking (FEFO) for perishables, and deployment with a hosted demo.
+- Roadmap: per-product lead times and suppliers, purchase-order records, and expiry/batch tracking (FEFO) for perishables.
 
 ## Author
 
